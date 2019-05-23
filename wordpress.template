@@ -1,0 +1,983 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "This template creates a new VPC and deploys a highly available WordPress.",
+    "Parameters": {
+        "VPCCIDR": {
+            "Default": "10.0.0.0/16",
+            "Description": "VPC CIDR",
+            "Type": "String"
+        },
+        "PrivateSubnetAz1CIDR": {
+            "Default": "10.0.0.0/24",
+            "Description": "PrvSub1 CIDR",
+            "Type": "String"
+        },
+        "PrivateSubnetAz2CIDR": {
+            "Default": "10.0.1.0/24",
+            "Description": "PrvSub2 CIDR",
+            "Type": "String"
+        },
+        "PublicSubnetAz1CIDR": {
+            "Default": "10.0.10.0/24",
+            "Description": "PubSub1 CIDR",
+            "Type": "String"
+        },
+        "PublicSubnetAz2CIDR": {
+            "Default": "10.0.11.0/24",
+            "Description": "PubSub2 CIDR",
+            "Type": "String"
+        },
+        "DatabaseName": {
+            "Default": "wordpress",
+            "Description": "Database name",
+            "Type": "String"
+        },
+        "DatabaseUsername": {
+            "Default": "dbadmin",
+            "Description": "Database Username",
+            "Type": "String"
+        },
+        "DatabasePassword": {
+            "AllowedPattern": "(?=\\S)[^@/\"\\r\\n\\t\\f\\s]*",
+            "ConstraintDescription": "Min 8 alphanumeric. Cannot contain white space, @, /, \"",
+            "Description": "8-41 character, alphanumeric string to be used as the database admin account password (database admin username is 'root').",
+            "MaxLength": "41",
+            "MinLength": "8",
+            "NoEcho": "True",
+            "Type": "String"
+        },
+        "DatabaseInstanceClass": {
+            "Default": "db.t2.medium",
+            "Description": "Database instance class",
+            "Type": "String"
+        },
+        "WebAsgMax": {
+            "Default": "4",
+            "Description": "Specifies the maximum number of EC2 instances in Autoscaling Group",
+            "Type": "String"
+        },
+        "WebAsgMin": {
+            "Default": "2",
+            "Description": "Specifies the minimum number of EC2 instances in Autoscaling Group",
+            "Type": "String"
+        },
+        "WPDirectory": {
+            "Default": "technical-challenge",
+            "Description": "Wordpress site directory",
+            "Type": "String"
+        },
+        "WPTitle": {
+            "Default": "HA WordPress site",
+            "Description": "Wordpress site title",
+            "Type": "String"
+        },
+        "WPLocale": {
+            "Default": "en_GB",
+            "Description": "Language code",
+            "Type": "String"
+        },
+        "WPVersion": {
+            "Default": "latest",
+            "Description": "Wordpress version",
+            "Type": "String"
+        },
+        "WPAdminUsername": {
+            "Default": "admin",
+            "Description": "Wordpress Admin Username",
+            "Type": "String"
+        },
+        "WPAdminPassword": {
+            "AllowedPattern": "(?=\\S)[^@/\"\\r\\n\\t\\f\\s]*",
+            "ConstraintDescription": "Min 8 alphanumeric. Cannot contain white space, @, /, \"",
+            "Description": "8-41 character, alphanumeric string to be used as the database admin account password (database admin username is 'root').",
+            "MaxLength": "41",
+            "MinLength": "8",
+            "NoEcho": "True",
+            "Type": "String"
+        },
+        "WPAdminEmail": {
+            "Default": "nick@emz.com.au",
+            "Description": "Wordpress admin email address",
+            "Type": "String"
+        },
+        "WebInstanceType": {
+            "Default": "t2.large",
+            "Description": "EC2 instance type",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "WebSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Security group for web instances",
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 80,
+                        "ToPort": 80,
+                        "SourceSecurityGroupId": {
+                            "Ref": "ALBSecurityGroup"
+                        }
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "SourceSecurityGroupId": {
+                            "Ref": "ALBSecurityGroup"
+                        }
+                    }
+                ],
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            }
+        },
+        "DatabaseSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Security group for Amazon RDS cluster",
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 3306,
+                        "ToPort": 3306,
+                        "SourceSecurityGroupId": {
+                            "Ref": "WebSecurityGroup"
+                        }
+                    }
+                ],
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            }
+        },
+        "DatabaseCluster": {
+            "Properties" : {
+                "DatabaseName": {
+                    "Ref": "DatabaseName"
+                },
+                "DBSubnetGroupName" : {
+                    "Ref": "DatabaseSubnetGroup"
+                },
+                "Engine" : "aurora",
+                "MasterUserPassword" : {
+                    "Ref": "DatabasePassword"
+                },
+                "MasterUsername" : {
+                    "Ref": "DatabaseUsername"
+                },
+                "Port" : "3306",
+                "VpcSecurityGroupIds" : [
+                    {
+                        "Ref": "DatabaseSecurityGroup"
+                    }
+                ]
+            },
+            "Type" : "AWS::RDS::DBCluster"
+        },
+        "DatabaseInstance0": {
+            "Type" : "AWS::RDS::DBInstance",
+            "Properties": {
+                "AllowMajorVersionUpgrade" : false,
+                "AutoMinorVersionUpgrade" : true,
+                "Engine": "aurora",
+                "DBClusterIdentifier" : {
+                    "Ref": "DatabaseCluster"
+                },
+                "DBInstanceClass" : {
+                    "Ref": "DatabaseInstanceClass"
+                },
+                "DBSubnetGroupName": {
+                    "Ref": "DatabaseSubnetGroup"
+                }
+            }
+        },
+        "DatabaseInstance1": {
+            "Type" : "AWS::RDS::DBInstance",
+            "Properties": {
+                "AllowMajorVersionUpgrade" : false,
+                "AutoMinorVersionUpgrade" : true,
+                "Engine": "aurora",
+                "DBClusterIdentifier" : {
+                    "Ref": "DatabaseCluster"
+                },
+                "DBInstanceClass" : {
+                    "Ref": "DatabaseInstanceClass"
+                },
+                "DBSubnetGroupName": {
+                    "Ref": "DatabaseSubnetGroup"
+                }
+            }
+        },
+        "DatabaseSubnetGroup": {
+            "Type" : "AWS::RDS::DBSubnetGroup",
+            "Properties" : {
+                "DBSubnetGroupDescription" : "RDS Subnet Group for Wordpress",
+                "SubnetIds" : [
+                    {
+                        "Ref": "PubSubnetAz1"
+                    },
+                    {
+                        "Ref": "PubSubnetAz2"
+                    }
+                ]
+            }
+        },
+        "EFSSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Security group for EFS mount targets",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 2049,
+                        "ToPort": 2049,
+                        "SourceSecurityGroupId": {
+                            "Ref": "WebSecurityGroup"
+                        }
+                    }
+                ]
+            }
+        },
+        "EFSSecurityGroupIngress": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "IpProtocol": "tcp",
+                "FromPort": 2049,
+                "ToPort": 2049,
+                "SourceSecurityGroupId": {
+                    "Fn::GetAtt": [
+                        "EFSSecurityGroup",
+                        "GroupId"
+                    ]
+                },
+                "GroupId": {
+                    "Fn::GetAtt": [
+                        "EFSSecurityGroup",
+                        "GroupId"
+                    ]
+                }
+            }
+        },
+        "ElasticFileSystem": {
+            "Properties" : {
+                "Encrypted" : false
+            },
+            "Type" : "AWS::EFS::FileSystem"
+        },
+        "EFSMountTargetAz1": {
+            "Properties" : {
+                "FileSystemId" : 
+                    {
+                        "Ref": "ElasticFileSystem"
+                    },
+                "SecurityGroups" : [
+                    {
+                        "Ref": "EFSSecurityGroup"
+                    }
+                ],
+                "SubnetId" : {
+                    "Ref": "PrvSubnetAz1"
+                }
+            },
+            "Type" : "AWS::EFS::MountTarget"
+        },
+        "EFSMountTargetAz2": {
+            "Properties" : {
+                "FileSystemId" : 
+                    {
+                        "Ref": "ElasticFileSystem"
+                    },
+                    "SecurityGroups" : [
+                        {
+                            "Ref": "EFSSecurityGroup"
+                        }
+                    ],
+                "SubnetId" : {
+                    "Ref": "PrvSubnetAz2"
+                }
+            },
+            "Type" : "AWS::EFS::MountTarget"
+        },
+        "ALB": {
+            "Properties": {
+                "Scheme": "internet-facing",
+                "SecurityGroups": [
+                    {
+                        "Ref": "ALBSecurityGroup"
+                    }
+                ],
+                "Subnets": [
+                    {
+                        "Ref": "PubSubnetAz1"
+                    },
+                    {
+                        "Ref": "PubSubnetAz2"
+                    }
+                ]
+            },
+            "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer"
+        },
+        "ALBSecurityGroup": {
+            "Properties": {
+                "GroupDescription": "ALB Security Group",
+                "SecurityGroupIngress": [
+                    {
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": "80",
+                        "IpProtocol": "tcp",
+                        "ToPort": "80"
+                    }
+                ],
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::SecurityGroup"
+        },
+        "ALBTargetGroup": {
+            "Properties": {
+                "HealthCheckIntervalSeconds": "30",
+                "HealthCheckPath": "/wp-login.php",
+                "HealthCheckProtocol": "HTTP",
+                "HealthCheckTimeoutSeconds": "5",
+                "Port": 80,
+                "Protocol": "HTTP",
+                "UnhealthyThresholdCount": "5",
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup"
+        },
+        "ALBListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties": {
+                "DefaultActions": [
+                    {
+                        "Type": "forward",
+                        "TargetGroupArn": {
+                            "Ref": "ALBTargetGroup"
+                        }
+                    }
+                ],
+                "LoadBalancerArn": {
+                    "Ref": "ALB"
+                },
+                "Port": 80,
+                "Protocol": "HTTP"
+            }
+        },
+        "AttachGateway": {
+            "Properties": {
+                "InternetGatewayId": {
+                    "Ref": "InternetGateway"
+                },
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::VPCGatewayAttachment"
+        },
+        "InternetGateway": {
+            "Type": "AWS::EC2::InternetGateway"
+        },
+        "ElasticIP": {
+            "Type" : "AWS::EC2::EIP",
+            "Properties" : {
+                "Domain" : "VPC"
+            }
+        },
+        "NatGateway": {
+            "Type": "AWS::EC2::NatGateway",
+            "Properties" : {
+                "AllocationId" : {
+                    "Fn::GetAtt" : [ "ElasticIP", "AllocationId" ]
+                },
+                "SubnetId" : {
+                    "Ref": "PubSubnetAz1"
+                }
+            },
+            "DependsOn": "ElasticIP"
+        },
+        "PrvSubnet1RouteTableAssociation": {
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "RouteViaNat"
+                },
+                "SubnetId": {
+                    "Ref": "PrvSubnetAz1"
+                }
+            },
+            "Type": "AWS::EC2::SubnetRouteTableAssociation"
+        },
+        "PrvSubnet2RouteTableAssociation": {
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "RouteViaNat"
+                },
+                "SubnetId": {
+                    "Ref": "PrvSubnetAz2"
+                }
+            },
+            "Type": "AWS::EC2::SubnetRouteTableAssociation"
+        },
+        "PrvSubnetAz1": {
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            "a"
+                        ]
+                    ]
+                },
+                "CidrBlock": {
+                    "Ref": "PrivateSubnetAz1CIDR"
+                },
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::Subnet"
+        },
+        "PrvSubnetAz2": {
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            "b"
+                        ]
+                    ]
+                },
+                "CidrBlock": {
+                    "Ref": "PrivateSubnetAz2CIDR"
+                },
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::Subnet"
+        },
+        "PubSubnet1RouteTableAssociation": {
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "RouteViaIgw"
+                },
+                "SubnetId": {
+                    "Ref": "PubSubnetAz1"
+                }
+            },
+            "Type": "AWS::EC2::SubnetRouteTableAssociation"
+        },
+        "PubSubnet2RouteTableAssociation": {
+            "Properties": {
+                "RouteTableId": {
+                    "Ref": "RouteViaIgw"
+                },
+                "SubnetId": {
+                    "Ref": "PubSubnetAz2"
+                }
+            },
+            "Type": "AWS::EC2::SubnetRouteTableAssociation"
+        },
+        "PubSubnetAz1": {
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            "a"
+                        ]
+                    ]
+                },
+                "CidrBlock": {
+                    "Ref": "PublicSubnetAz1CIDR"
+                },
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::Subnet"
+        },
+        "PubSubnetAz2": {
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "AWS::Region"
+                            },
+                            "b"
+                        ]
+                    ]
+                },
+                "CidrBlock": {
+                    "Ref": "PublicSubnetAz2CIDR"
+                },
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::Subnet"
+        },
+        "PublicRouteViaIgw": {
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {
+                    "Ref": "InternetGateway"
+                },
+                "RouteTableId": {
+                    "Ref": "RouteViaIgw"
+                }
+            },
+            "Type": "AWS::EC2::Route"
+        },
+        "RouteViaIgw": {
+            "Properties": {
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::RouteTable"
+        },
+        "PrivateRouteViaNat": {
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "NatGatewayId": {
+                    "Ref": "NatGateway"
+                },
+                "RouteTableId": {
+                    "Ref": "RouteViaNat"
+                }
+            },
+            "Type": "AWS::EC2::Route",
+            "DependsOn": "NatGateway"
+        },
+        "RouteViaNat": {
+            "Properties": {
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            },
+            "Type": "AWS::EC2::RouteTable"
+        },
+        "VPC": {
+            "Properties": {
+                "EnableDnsSupport": "true",
+                "EnableDnsHostnames": "true",
+                "CidrBlock": {
+                    "Ref": "VPCCIDR"
+                }
+            },
+            "Type": "AWS::EC2::VPC"
+        },
+        "WebInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "WebInstanceRole"
+                    }
+                ]
+            }
+        },
+        "WebInstanceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "logs",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents",
+                                        "logs:DescribeLogStreams"
+                                    ],
+                                    "Resource": [
+                                        "arn:aws:logs:*:*:*"
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "WebAutoScalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "Cooldown": 60,
+                "HealthCheckGracePeriod": 120,
+                "HealthCheckType": "ELB",
+                "LaunchConfigurationName": {
+                    "Ref": "WebLaunchConfiguration70"
+                },
+                "MaxSize": {
+                    "Ref": "WebAsgMax"
+                },
+                "MinSize": {
+                    "Ref": "WebAsgMin"
+                },
+                "TargetGroupARNs": [
+                    {
+                    "Ref": "ALBTargetGroup"
+                    }
+                ],
+                "VPCZoneIdentifier": [
+                    {
+                        "Ref": "PrvSubnetAz1"
+                    },
+                    {
+                        "Ref": "PrvSubnetAz2"
+                    }
+                ]
+            }
+        },
+        "WebLaunchConfiguration70": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Metadata": {
+                "AWS::CloudFormation::Init": {
+                    "configSets": {
+                        "deploy_webserver": [
+                            "install_webserver",
+                            "build_wordpress",
+                            "install_wordpress",
+                            "start_webserver"
+                        ]
+                    },
+                    "install_webserver": {
+                        "packages": {
+                            "yum": {
+                                "awslogs": [],
+                                "httpd24": [],
+                                "mysql56": [],
+                                "php70": [],
+                                "php70-devel": [],
+                                "php7-pear": [],
+                                "php70-mysqlnd": []
+                            }
+                        },
+                        "files": {
+                            "/tmp/create_site_conf.sh": {
+                                "content": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "#!/bin/bash -xe\n",
+                                            "if [ ! -f /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf ]; then\n",
+                                            "   touch /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "   echo 'ServerName 127.0.0.1:80' >> /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "   echo 'DocumentRoot /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            "' >> /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "   echo '<Directory /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ">' >> /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "   echo '  Options Indexes FollowSymLinks' >> /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "   echo '  AllowOverride All' >> /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "   echo '  Require all granted' >> /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "   echo '</Directory>' >> /etc/httpd/conf.d/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            ".conf\n",
+                                            "fi\n"
+                                        ]
+                                    ]
+                                },
+                                "mode": 320,
+                                "owner": "root",
+                                "group": "root"
+                            }
+                        },
+                        "commands": {
+                            "create_site_conf": {
+                                "command": "./create_site_conf.sh",
+                                "cwd": "/tmp",
+                                "ignoreErrors": false
+                            }
+                        }
+                    },
+                    "build_wordpress": {
+                        "files": {
+                            "/tmp/install_wordpress.sh": {
+                                "content": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "#!/bin/bash -xe\n",
+                                            "\n",
+                                            "# install wp-cli\n",
+                                            "if [ ! -f /bin/wp/wp-cli.phar ]; then\n",
+                                            "   curl -o /bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar\n",
+                                            "   chmod +x /bin/wp\n",
+                                            "fi\n",
+                                            "\n",
+                                            "# make site directory\n",
+                                            "if [ ! -d /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            " ]; then\n",
+                                            "   mkdir -p /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            "\n",
+                                            "\n",
+                                            "   cd /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            "\n",
+                                            "   # install wordpress if not installed\n",
+                                            "   # use public alb host name if wp domain name was empty\n",
+                                            "   if ! $(wp core is-installed --allow-root); then\n",
+                                            "       wp core download --version='",
+                                            {
+                                                "Ref": "WPVersion"
+                                            },
+                                            "' --locale='",
+                                            {
+                                                "Ref": "WPLocale"
+                                            },
+                                            "' --allow-root\n",
+                                            "       wp core config --dbname='",
+                                            {
+                                                "Ref": "DatabaseName"
+                                            },
+                                            "' --dbuser='",
+                                            {
+                                                "Ref": "DatabaseUsername"
+                                            },
+                                            "' --dbpass='",
+                                            {
+                                                "Ref": "DatabasePassword"
+                                            },
+                                            "' --dbhost='",
+                                            {
+                                                "Fn::GetAtt": [
+                                                    "DatabaseCluster",
+                                                    "Endpoint.Address"
+                                                ]
+                                            },
+                                            "' --dbprefix=wp_ --allow-root\n",
+                                            "       wp core install --url=",
+                                            {
+                                                "Fn::Join": [
+                                                    "",
+                                                    [
+                                                        "'http://",
+                                                        {
+                                                            "Fn::GetAtt": [
+                                                                "ALB",
+                                                                "DNSName"
+                                                            ]
+                                                        },
+                                                        "'"
+                                                    ]
+                                                ]
+                                            },
+                                            " --title='",
+                                            {
+                                                "Ref": "WPTitle"
+                                            },
+                                            "' --admin_user='",
+                                            {
+                                                "Ref": "WPAdminUsername"
+                                            },
+                                            "' --admin_password='",
+                                            {
+                                                "Ref": "WPAdminPassword"
+                                            },
+                                            "' --admin_email='",
+                                            {
+                                                "Ref": "WPAdminEmail"
+                                            },
+                                            "' --skip-email --allow-root\n",
+                                            "       wp plugin install w3-total-cache\n",
+                                            "       sed -i \"/$table_prefix = 'wp_';/ a \\define('WP_HOME', 'http://' . \\$_SERVER['HTTP_HOST']); \" /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            "/wp-config.php\n",
+                                            "       sed -i \"/$table_prefix = 'wp_';/ a \\define('WP_SITEURL', 'http://' . \\$_SERVER['HTTP_HOST']); \" /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            "/wp-config.php\n",
+                                            "       # enable HTTPS in wp-config.php if ACM Public SSL Certificate parameter was not empty\n",
+                                            {
+                                                "Fn::Join": [
+                                                    "",
+                                                    [
+                                                        "       sed -i \"/$table_prefix = 'wp_';/ a \\# No ACM Public SSL Certificate \" /var/www/wordpress/",
+                                                        {
+                                                            "Ref": "WPDirectory"
+                                                        },
+                                                        "/wp-config.php\n"
+                                                    ]
+                                                ]
+                                            },
+                                            "\n",
+                                            "       # set permissions of wordpress site directories\n",
+                                            "       chown -R apache:apache /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            "\n",
+                                            "       chmod u+wrx /var/www/wordpress/",
+                                            {
+                                                "Ref": "WPDirectory"
+                                            },
+                                            "/wp-content/*\n",
+                                            "   fi\n",
+                                            "fi\n"
+                                        ]
+                                    ]
+                                },
+                                "mode": 320,
+                                "owner": "root",
+                                "group": "root"
+                            }
+                        }
+                    },
+                    "install_wordpress": {
+                        "commands": {
+                            "install_wordpress": {
+                                "command": "./install_wordpress.sh",
+                                "cwd": "/tmp",
+                                "ignoreErrors": true
+                            }
+                        }
+                    },
+                    "start_webserver": {
+                        "services": {
+                            "sysvinit": {
+                                "httpd": {
+                                    "enabled": true,
+                                    "ensureRunning": true
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "Properties": {
+                "IamInstanceProfile": {
+                    "Ref": "WebInstanceProfile"
+                },
+                "ImageId": "ami-ff4ea59d",
+                "InstanceMonitoring": true,
+                "InstanceType": {
+                    "Ref": "WebInstanceType"
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "WebSecurityGroup"
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Sub": "#!/bin/bash -xe\nyum update -y\nmkdir -p /var/www/wordpress\nmount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 ${ElasticFileSystem}.efs.${AWS::Region}.amazonaws.com:/ /var/www/wordpress\n/opt/aws/bin/cfn-init --configsets deploy_webserver --verbose --stack ${AWS::StackName} --resource WebLaunchConfiguration70 --region ${AWS::Region}\n/opt/aws/bin/cfn-signal --exit-code $? --stack ${AWS::StackName} --resource WebAutoScalingGroup --region ${AWS::Region}\n"
+                    }
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "ALBURL": {
+            "Description": "URL of the ALB",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "http://",
+                        {
+                            "Fn::GetAtt": [
+                                "ALB",
+                                "DNSName"
+                            ]
+                        }
+                    ]
+                ]
+            }
+        }
+    }
+}
